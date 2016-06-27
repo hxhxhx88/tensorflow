@@ -326,6 +326,21 @@ cc_header_only_library(
     deps = [":image_resizer_state"],
 )
 
+#cc_library(
+#    name = "image_resizer_state_3d",
+#    hdrs = ["image_resizer_state_3d.h"],
+#    visibility = ["//visibility:private"],
+#    deps = [
+#        "//tensorflow/core:lib",
+#        "//third_party/eigen3",
+#    ],
+#)
+#
+#cc_header_only_library(
+#    name = "image_resizer_state_3d_lib",
+#    deps = [":image_resizer_state_3d"],
+#)
+
 # OpKernel libraries ----------------------------------------------------------
 
 tf_kernel_libraries(
@@ -797,6 +812,7 @@ tf_kernel_libraries(
         ":bounds_check",
         ":eigen_helpers",
         ":image_resizer_state",
+        #":image_resizer_state_3d",
         "//tensorflow/core:framework",
         "//tensorflow/core:image_ops_op_lib",
         "//tensorflow/core:lib",
@@ -1784,6 +1800,7 @@ filegroup(
         "control_flow_ops.h",
         "conv_2d.h",
         "image_resizer_state.h",
+        #"image_resizer_state_3d.h",
         "maxpooling_op.h",
         "pad_op.h",
         "random_op.h",
