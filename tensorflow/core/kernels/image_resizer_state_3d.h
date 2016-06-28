@@ -21,10 +21,11 @@ namespace tensorflow {
 struct ImageResizerState3D {
     explicit ImageResizerState3D(bool align_corners) : align_corners_(align_corners) {}
 
-    void ValidateAndCreateOutput(OpKernelContext* context, const Tensor& input) {
+    void ValidateAndCreateOutput(OpKernelContext* context) {
         //  context->input[0] is the `input`
         //  context->input[1] is the `output_size`, which is a 1-dimensional vector with 3 elements [depth, height, width]
         //  `input` should be a 5-dimentional tensor with shape [batch_size, depth, height, width, channel]
+        const Tensor& input = context->input(0);
 
         OP_REQUIRES(context, input.dims() == 5, errors::InvalidArgument("input must be 5-dimensional", input.shape().DebugString()));
 
@@ -75,6 +76,8 @@ struct ImageResizerState3D {
             context->allocate_output(0, TensorShape({batch_size, out_depth, out_height, out_width, channels}), &output)
         );
 
+        //  Note: the scale is input_size / output_size, i.e. the factor 
+        //  transforming the output back to input.
         depth_scale = CalculateResizeScale(in_depth, out_depth, align_corners_);
         height_scale = CalculateResizeScale(in_height, out_height, align_corners_);
         width_scale = CalculateResizeScale(in_width, out_width, align_corners_);
@@ -96,6 +99,18 @@ struct ImageResizerState3D {
 private:
     bool align_corners_;
 };
+
+//  Unlike the implementation in 2D case, we do not create a 
+//  ImageResizerGradientState3D struct here, since in fact it is the same thing 
+//  as ImageResizerState3D.
+//  In ImageResizerState3D, the context (parameters) are:
+//      0: input_image, a 5-D tensor with shape [b, d, h, w, c]
+//      1: output_shape, a 3-D tensor with shape [d, h, w]
+//  In ImageResizerGradientState3D, the context are:
+//      0: backprop_grad, a 5-D tensor with shape [b, d, h, w, c]
+//      1: input_shape, a 3-D tensor with shape [d, h, w]
+//  As a result, we just need to utilize the in_* and out_* properties as
+//  different purposes.
 
 }  // namespace tensorflow
 

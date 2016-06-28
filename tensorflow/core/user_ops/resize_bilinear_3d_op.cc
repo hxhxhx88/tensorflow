@@ -24,6 +24,13 @@ REGISTER_OP("ResizeBilinear3D")
     .Attr("T: {uint8, int8, int16, int32, int64, half, float, double}")
     .Attr("align_corners: bool = false");
 
+REGISTER_OP("ResizeBilinear3DGrad")
+    .Input("grads_wrt_output: T")
+    .Input("input_size: int32")
+    .Output("grads_wrt_input: T")
+    .Attr("T: {float, half, double}")
+    .Attr("align_corners: bool = false");
+
 namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
@@ -36,14 +43,11 @@ public:
     }
 
     void Compute(OpKernelContext* context) override {
-        const Tensor& input = context->input(0);
-        
         ImageResizerState3D st(align_corners_);
-        st.ValidateAndCreateOutput(context, input);
-
+        st.ValidateAndCreateOutput(context);
         if (!context->status().ok()) return;
 
-        typename TTypes<T, 5>::ConstTensor input_data = input.tensor<T, 5>();
+        typename TTypes<T, 5>::ConstTensor input_data = context->input(0).tensor<T, 5>();
         typename TTypes<float, 5>::Tensor output_data = st.output->tensor<float, 5>();
 
         for (int b = 0; b < st.batch_size; ++b) {
@@ -91,6 +95,67 @@ private:
     bool align_corners_;
 };
 
+template <typename Device, typename T>
+class ResizeBilinear3DOpGrad : public OpKernel {
+public:
+    explicit ResizeBilinear3DOpGrad(OpKernelConstruction* context) : OpKernel(context) {
+        OP_REQUIRES_OK(context, context->GetAttr("align_corners", &align_corners_));
+    }
+
+    void Compute(OpKernelContext* context) override {
+        ImageResizerState3D st(align_corners_);
+        st.ValidateAndCreateOutput(context);
+        if (!context->status().ok()) return;
+
+        typename TTypes<float, 5>::ConstTensor grad_wrt_output = context->input(0).tensor<float, 5>();
+        typename TTypes<T, 5>::Tensor grad_wrt_input = st.output->tensor<T, 5>();
+
+        for (int b = 0; b < st.batch_size; ++b) {
+            for (int z = 0; z < st.in_depth; ++z) {
+                const float in_z = float(z) / st.depth_scale;
+                const int64 front_z_index = static_cast<int64>(floorf(in_z));
+                const int64 back_z_index = std::min(static_cast<int64>(ceilf(in_z)), (st.out_depth - 1));
+                const float z_lerp = in_z - front_z_index;
+                for (int y = 0; y < st.in_height; ++y) {
+                    const float in_y = float(y) / st.height_scale;
+                    const int64 top_y_index = static_cast<int64>(floorf(in_y));
+                    const int64 bottom_y_index = std::min(static_cast<int64>(ceilf(in_y)), (st.out_height - 1));
+                    const float y_lerp = in_y - top_y_index;
+                    for (int x = 0; x < st.in_width; ++x) {
+                        const float in_x = float(x) / st.width_scale;
+                        const int64 left_x_index = static_cast<int64>(floorf(in_x));
+                        const int64 right_x_index = std::min(static_cast<int64>(ceilf(in_x)), (st.out_width - 1));
+                        const float x_lerp = in_x - left_x_index;
+                        for (int c = 0; c < st.channels; ++c) {
+                            const float g(grad_wrt_output(b, z, y, x, c));
+
+                            grad_wrt_input(b, front_z_index, top_y_index, left_x_index, c) += 
+                                T(g * (1 - z_lerp) * (1 - y_lerp) * (1 - x_lerp));
+                            grad_wrt_input(b, front_z_index, top_y_index, right_x_index, c) +=
+                                T(g * (1 - z_lerp) * (1 - y_lerp) * x_lerp);
+                            grad_wrt_input(b, front_z_index, bottom_y_index, left_x_index, c) += 
+                                T(g * (1 - z_lerp) * y_lerp * (1 - x_lerp));
+                            grad_wrt_input(b, front_z_index, bottom_y_index, right_x_index, c) += 
+                                T(g * (1 - z_lerp) * y_lerp * x_lerp);
+                            grad_wrt_input(b, back_z_index, top_y_index, left_x_index, c) += 
+                                T(g * z_lerp * (1 - y_lerp) * (1 - x_lerp));
+                            grad_wrt_input(b, back_z_index, top_y_index, right_x_index, c) +=
+                                T(g * z_lerp * (1 - y_lerp) * x_lerp);
+                            grad_wrt_input(b, back_z_index, bottom_y_index, left_x_index, c) += 
+                                T(g * z_lerp * y_lerp * (1 - x_lerp));
+                            grad_wrt_input(b, back_z_index, bottom_y_index, right_x_index, c) += 
+                                T(g * z_lerp * y_lerp * x_lerp);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+private:
+    bool align_corners_;
+};
+
 #define REGISTER_KERNEL(T) \
     REGISTER_KERNEL_BUILDER(Name("ResizeBilinear3D") \
         .Device(DEVICE_CPU) \
@@ -101,5 +166,16 @@ private:
 TF_CALL_REAL_NUMBER_TYPES(REGISTER_KERNEL);
 
 #undef REGISTER_KERNEL
+
+#define REGISTER_GRAD_KERNEL(T) \
+  REGISTER_KERNEL_BUILDER(Name("ResizeBilinear3DGrad") \
+    .Device(DEVICE_CPU) \
+    .TypeConstraint<T>("T") \
+    .HostMemory("input_size"), \
+    ResizeBilinear3DOpGrad<CPUDevice, T>);
+
+TF_CALL_REAL_NUMBER_TYPES(REGISTER_GRAD_KERNEL);
+
+#undef REGISTER_GRAD_KERNEL
 
 }  // namespace tensorflow
